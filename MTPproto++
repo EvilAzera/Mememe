@@ -1,0 +1,88 @@
+#!/bin/bash
+# =================================================================
+#  MTProto Proxy (mtg v2) — Улучшенная установка
+# =================================================================
+set -e
+
+# Цвета для красоты
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+echo -e "${GREEN}🛡 Установка MTProto Proxy для Telegram${NC}"
+echo "========================================="
+
+# 1. Проверка прав root
+if [ "$EUID" -ne 0 ]; then
+    echo -e "${RED}Ошибка: Запустите скрипт от имени root (sudo)${NC}"
+    exit 1
+fi
+
+# 2. Установка необходимых утилит (curl, xxd)
+echo "📦 Проверка зависимостей..."
+if ! command -v xxd &>/dev/null || ! command -v curl &>/dev/null; then
+    apt-get update -qq && apt-get install -y -qq xxd curl >/dev/null 2>&1 || \
+    yum install -y -q vim-common curl >/dev/null 2>&1 # Для CentOS/Fedora
+fi
+
+# 3. Установка Docker (улучшенный метод)
+if ! command -v docker &>/dev/null; then
+    echo "🐳 Устанавливаю Docker..."
+    curl -fsSL https://get.docker.com | sh >/dev/null 2>&1
+    systemctl enable --now docker >/dev/null 2>&1
+    echo "   ✅ Docker установлен"
+else
+    echo "   ✅ Docker уже есть"
+fi
+
+# 4. Генерация секрета и настройка параметров
+# Используем домен google.com для маскировки под TLS
+DOMAIN="www.google.com"
+HEX_DOMAIN=$(echo -n "$DOMAIN" | xxd -p)
+RAND_PART=$(head -c 16 /dev/urandom | xxd -ps -c 256 | tr -d '\n ')
+SECRET="ee${RAND_PART}${HEX_DOMAIN}"
+
+PORT=443 # Стандартный порт для FakeTLS
+
+# 5. Определение IP (с обработкой ошибок)
+IP=$(curl -4 -s --connect-timeout 5 ifconfig.me || curl -4 -s icanhazip.com)
+if [[ -z "$IP" ]]; then
+    echo -e "${RED}Не удалось определить внешний IP!${NC}"
+    exit 1
+fi
+
+# 6. Создание конфига и запуск
+mkdir -p /etc/mtg
+cat > /etc/mtg/config.toml <<EOF
+secret = "${SECRET}"
+bind-to = "0.0.0.0:3128"
+prefer-ip = "prefer-ipv4"
+concurrency = 8192
+
+[network]
+doh-ip = "1.1.1.1"
+EOF
+
+# Очистка старых контейнеров
+docker rm -f mtg >/dev/null 2>&1 || true
+
+echo "🚀 Запуск контейнера..."
+docker run -d \
+    --name mtg \
+    --restart always \
+    -p $PORT:3128 \
+    -v /etc/mtg/config.toml:/config.toml:ro \
+    nineseconds/mtg:2 run /config.toml >/dev/null
+
+# 7. Финальный вывод
+LINK="https://t.me/proxy?server=${IP}&port=${PORT}&secret=${SECRET}"
+
+echo -e "\n${GREEN}=========================================${NC}"
+echo -e "${GREEN}✅ Прокси успешно запущен!${NC}"
+echo -e "\nВаши данные для настройки вручную:"
+echo -e "IP: ${IP}"
+echo -e "Port: ${PORT}"
+echo -e "Secret: ${SECRET}"
+echo -e "\n${GREEN}📎 Ссылка для быстрой активации:${NC}"
+echo -e "${GREEN}$LINK${NC}"
+echo -e "=========================================\n"
