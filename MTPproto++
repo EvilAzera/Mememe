@@ -1,56 +1,57 @@
 #!/bin/bash
+# =================================================================
+#  MTProto Proxy (mtg v2) — Улучшенная установка
+# =================================================================
 set -e
 
-# Цвета
+# Цвета для красоты
 GREEN='\033[0;32m'
-CYAN='\033[0;36m'
-YELLOW='\033[1;33m'
+RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${CYAN}🛡 Установка MTProto Proxy (Random Port + Yandex TLS + Auto Firewall)${NC}"
+echo -e "${GREEN}🛡 Установка MTProto Proxy для Telegram${NC}"
+echo "========================================="
 
-# 1. Зависимости
-if ! command -v xxd &>/dev/null || ! command -v curl &>/dev/null; then
-    apt-get update -qq && apt-get install -y -qq xxd curl >/dev/null 2>&1 || \
-    yum install -y -q vim-common curl >/dev/null 2>&1
+# 1. Проверка прав root
+if [ "$EUID" -ne 0 ]; then
+    echo -e "${RED}Ошибка: Запустите скрипт от имени root (sudo)${NC}"
+    exit 1
 fi
 
-# 2. Docker
+# 2. Установка необходимых утилит (curl, xxd)
+echo "📦 Проверка зависимостей..."
+if ! command -v xxd &>/dev/null || ! command -v curl &>/dev/null; then
+    apt-get update -qq && apt-get install -y -qq xxd curl >/dev/null 2>&1 || \
+    yum install -y -q vim-common curl >/dev/null 2>&1 # Для CentOS/Fedora
+fi
+
+# 3. Установка Docker (улучшенный метод)
 if ! command -v docker &>/dev/null; then
     echo "🐳 Устанавливаю Docker..."
     curl -fsSL https://get.docker.com | sh >/dev/null 2>&1
     systemctl enable --now docker >/dev/null 2>&1
-fi
-
-# 3. Генерация случайного порта
-PORT=443
-
-done
-echo -e "🎲 Выбран случайный порт: ${GREEN}$PORT${NC}"
-
-# 4. Настройка Firewall (открытие порта)
-echo "🔥 Настройка брандмауэра..."
-if command -v ufw &>/dev/null && ufw status | grep -q "active"; then
-    ufw allow "$PORT"/tcp >/dev/null
-    echo -e "   ✅ UFW: Порт $PORT открыт"
-elif command -v firewall-cmd &>/dev/null; then
-    firewall-cmd --permanent --add-port="$PORT"/tcp >/dev/null 2>&1
-    firewall-cmd --reload >/dev/null 2>&1
-    echo -e "   ✅ Firewalld: Порт $PORT открыт"
+    echo "   ✅ Docker установлен"
 else
-    echo -e "   ${YELLOW}⚠️  Брандмауэр не найден или не активен. Убедитесь, что порт $PORT открыт в панели управления хостингом.${NC}"
+    echo "   ✅ Docker уже есть"
 fi
 
-# 5. Генерация секрета под Яндекс
-DOMAIN="www.yandex.ru"
+# 4. Генерация секрета и настройка параметров
+# Используем домен gosuslugi.ru для маскировки под TLS
+DOMAIN="gosuslugi.ru"
 HEX_DOMAIN=$(echo -n "$DOMAIN" | xxd -p)
 RAND_PART=$(head -c 16 /dev/urandom | xxd -ps -c 256 | tr -d '\n ')
 SECRET="ee${RAND_PART}${HEX_DOMAIN}"
 
-# 6. IP сервера
-IP=$(curl -4 -s ifconfig.me || curl -4 -s icanhazip.com)
+PORT=443 # Стандартный порт для FakeTLS
 
-# 7. Конфиг и запуск
+# 5. Определение IP (с обработкой ошибок)
+IP=$(curl -4 -s --connect-timeout 5 ifconfig.me || curl -4 -s icanhazip.com)
+if [[ -z "$IP" ]]; then
+    echo -e "${RED}Не удалось определить внешний IP!${NC}"
+    exit 1
+fi
+
+# 6. Создание конфига и запуск
 mkdir -p /etc/mtg
 cat > /etc/mtg/config.toml <<EOF
 secret = "${SECRET}"
@@ -62,21 +63,26 @@ concurrency = 8192
 doh-ip = "1.1.1.1"
 EOF
 
+# Очистка старых контейнеров
 docker rm -f mtg >/dev/null 2>&1 || true
 
+echo "🚀 Запуск контейнера..."
 docker run -d \
     --name mtg \
     --restart always \
-    -p "$PORT":3128 \
+    -p $PORT:3128 \
     -v /etc/mtg/config.toml:/config.toml:ro \
     nineseconds/mtg:2 run /config.toml >/dev/null
 
-# 8. Вывод
+# 7. Финальный вывод
 LINK="https://t.me/proxy?server=${IP}&port=${PORT}&secret=${SECRET}"
 
 echo -e "\n${GREEN}=========================================${NC}"
-echo -e "✅ Готово! Прокси работает на порту $PORT"
-echo -e "Маскировка под: $DOMAIN"
-echo -e "\n${GREEN}📎 Ссылка для подключения:${NC}"
+echo -e "${GREEN}✅ Прокси успешно запущен!${NC}"
+echo -e "\nВаши данные для настройки вручную:"
+echo -e "IP: ${IP}"
+echo -e "Port: ${PORT}"
+echo -e "Secret: ${SECRET}"
+echo -e "\n${GREEN}📎 Ссылка для быстрой активации:${NC}"
 echo -e "${GREEN}$LINK${NC}"
-echo -e "${GREEN}=========================================${NC}\n"
+echo -e "=========================================\n"
