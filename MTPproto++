@@ -42,7 +42,7 @@ HEX_DOMAIN=$(echo -n "$DOMAIN" | xxd -p)
 RAND_PART=$(head -c 16 /dev/urandom | xxd -ps -c 256 | tr -d '\n ')
 SECRET="ee${RAND_PART}${HEX_DOMAIN}"
 
-PORT=443 # Стандартный порт для FakeTLS
+PORT=8443 # Стандартный порт для FakeTLS
 
 # 5. Определение IP (с обработкой ошибок)
 IP=$(curl -4 -s --connect-timeout 5 ifconfig.me || curl -4 -s icanhazip.com)
